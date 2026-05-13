@@ -16,55 +16,34 @@ app.post("/analyze-link", async (req, res) => {
   try {
     const { url } = req.body;
     
-    // שכבה 1: Metadata Scraper (ניסיון שליפת מידע גלוי מהדף)
-    let title = "";
-    let description = "";
-    let image = "";
-    
-    try {
-      const response = await axios.get(url, { 
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          timeout: 5000 
-      });
-      const $ = cheerio.load(response.data);
+    // שכבה 1: שליפת מטא-דאטה (הבסיס)
+    const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const $ = cheerio.load(response.data);
+    const title = $('meta[property="og:title"]').attr("content") || $("title").text();
+    const description = $('meta[property="og:description"]').attr("content") || "";
+    const image = $('meta[property="og:image"]').attr("content") || "";
 
-      title = $('meta[property="og:title"]').attr("content") || $("title").text();
-      description = $('meta[property="og:description"]').attr("content") || $('meta[name="description"]').attr("content") || "";
-      image = $('meta[property="og:image"]').attr("content") || "";
-    } catch (e) {
-      console.log("Metadata fallback triggered");
-    }
+    // זיהוי אם זה וידאו (בשביל ה-Pipeline העתידי)
+    const isVideo = url.includes("youtube.com") || url.includes("tiktok.com") || url.includes("instagram.com/reel");
 
-    // שכבה 2: AI Classification & Understanding
-    // כאן ה-Prompt הופך ל"מערכתי" ומטפל בסיטואציות של חוסר מידע או תוכן מדיה
+    // שכבה 2: ניתוח חכם (כאן נכנס ה-Vision והבנת התוכן)
     const aiResponse = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // שימוש במודל חזק יותר שתומך בניתוח מורכב
+      model: "gpt-4o", // מודל שתומך גם בראייה (Vision)
       messages: [
         { 
           role: "system", 
-          content: `You are a high-level Content Extraction Agent for SaveSort. 
-          Your job is to analyze the provided link data and return a structured JSON object.
-          
-          RULES:
-          1. Detect the content type (Article, Video, PDF, Social Media post).
-          2. If metadata is thin or missing, infer the topic from the URL and available text.
-          3. CATEGORY: Identify the most specific niche category (e.g., AI Automation, Vegan Recipes, NBA News). Create a NEW category if needed.
-          4. SUMMARY: Provide a 2-sentence summary. If it's a video link, summarize based on the context of the title/description.
-          5. If audio transcript or OCR text were provided (future-proof), prioritize them.
-          
-          Return ONLY JSON:
-          {
-            "type": "content_type",
-            "category": "specific_category",
-            "summary": "2_sentence_summary",
-            "hashtags": ["tag1", "tag2", "tag3"]
-          }`
+          content: `You are the SaveSort AI Engine. 
+          1. Analyze the title and description.
+          2. If an image is provided, analyze its visual content (Vision).
+          3. If this is a VIDEO, prioritize explaining the action or tutorial described.
+          4. Return JSON: { "summary": "...", "category": "...", "hashtags": [...], "type": "..." }`
         },
         { 
           role: "user", 
-          content: `Analyze this link: ${url}. 
-          Metadata Title: ${title}. 
-          Metadata Description: ${description}.` 
+          content: [
+            { type: "text", text: `Analyze this ${isVideo ? 'video' : 'page'}: ${title}. Description: ${description}` },
+            { type: "image_url", image_url: { "url": image } } // כאן נכנס ה-Vision!
+          ]
         }
       ],
       response_format: { type: "json_object" }
@@ -72,26 +51,20 @@ app.post("/analyze-link", async (req, res) => {
 
     const aiData = JSON.parse(aiResponse.choices[0].message.content);
 
-    // החזרת התוצאה המלאה ל-Base44
     res.json({
-      success: true,
+      title,
+      image,
       url,
-      title: title || "New Saved Content",
-      image: image || "https://via.placeholder.com/300?text=SaveSort", // תמונת ברירת מחדל אם חסר
-      type: aiData.type,
-      category: aiData.category,
       summary: aiData.summary,
-      hashtags: aiData.hashtags
+      category: aiData.category,
+      hashtags: aiData.hashtags,
+      type: aiData.type
     });
 
   } catch (error) {
-    console.error("Critical Error:", error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: "SaveSort was unable to process this link." 
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`SaveSort Engine Running on port ${PORT}`));
+app.listen(PORT, () => console.log(`SaveSort AI is live on port ${PORT}`));
