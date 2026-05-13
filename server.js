@@ -13,36 +13,46 @@ const openai = new OpenAI({
 });
 
 app.post("/analyze-link", async (req, res) => {
-  try {
-    const { url } = req.body;
-    
-    // שכבה 1: שליפת מטא-דאטה (הבסיס)
-    const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    const $ = cheerio.load(response.data);
-    const title = $('meta[property="og:title"]').attr("content") || $("title").text();
-    const description = $('meta[property="og:description"]').attr("content") || "";
-    const image = $('meta[property="og:image"]').attr("content") || "";
+  const { url } = req.body;
+  let metadata = { title: url, description: "", image: "" };
 
-    // זיהוי אם זה וידאו (בשביל ה-Pipeline העתידי)
+  try {
+    // שלב 1: ניסיון סריקה (Scraping) עם הגנה מפני קריסה
+    try {
+      const response = await axios.get(url, { 
+        headers: { 
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
+        },
+        timeout: 5000 
+      });
+
+      const $ = cheerio.load(response.data);
+      metadata.title = $('meta[property="og:title"]').attr("content") || $("title").text() || url;
+      metadata.description = $('meta[property="og:description"]').attr("content") || "";
+      metadata.image = $('meta[property="og:image"]').attr("content") || "";
+    } catch (scrapingError) {
+      // אם הסריקה נכשלה (למשל אינסטגרם חסמה), אנחנו לא קורסים! פשוט ממשיכים עם ה-URL
+      console.log("Scraping blocked or failed, proceeding with URL only.");
+    }
+
     const isVideo = url.includes("youtube.com") || url.includes("tiktok.com") || url.includes("instagram.com/reel");
 
-    // שכבה 2: ניתוח חכם (כאן נכנס ה-Vision והבנת התוכן)
+    // שלב 2: ניתוח ה-AI (תמיד ירוץ, גם אם הסריקה נכשלה)
     const aiResponse = await openai.chat.completions.create({
-      model: "gpt-4o", // מודל שתומך גם בראייה (Vision)
+      model: "gpt-4o",
       messages: [
         { 
           role: "system", 
           content: `You are the SaveSort AI Engine. 
-          1. Analyze the title and description.
-          2. If an image is provided, analyze its visual content (Vision).
-          3. If this is a VIDEO, prioritize explaining the action or tutorial described.
-          4. Return JSON: { "summary": "...", "category": "...", "hashtags": [...], "type": "..." }`
+          Analyze the provided link and metadata. 
+          If metadata is missing, rely on the URL structure.
+          Return JSON: { "summary": "...", "category": "...", "hashtags": [...], "type": "..." }` 
         },
         { 
           role: "user", 
           content: [
-            { type: "text", text: `Analyze this ${isVideo ? 'video' : 'page'}: ${title}. Description: ${description}` },
-            { type: "image_url", image_url: { "url": image } } // כאן נכנס ה-Vision!
+            { type: "text", text: `Analyze this ${isVideo ? 'video' : 'page'}: ${url}. Metadata Title: ${metadata.title}. Description: ${metadata.description}` },
+            { type: "image_url", image_url: { "url": metadata.image || "https://placehold.co/600x400?text=No+Preview" } }
           ]
         }
       ],
@@ -51,9 +61,10 @@ app.post("/analyze-link", async (req, res) => {
 
     const aiData = JSON.parse(aiResponse.choices[0].message.content);
 
+    // החזרת התשובה ל-Base44
     res.json({
-      title,
-      image,
+      title: metadata.title,
+      image: metadata.image,
       url,
       summary: aiData.summary,
       category: aiData.category,
@@ -62,7 +73,8 @@ app.post("/analyze-link", async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Critical Error:", error.message);
+    res.status(500).json({ error: "Internal Server Error", details: error.message });
   }
 });
 
