@@ -16,50 +16,82 @@ app.post("/analyze-link", async (req, res) => {
   try {
     const { url } = req.body;
     
-    // שליפת מטא-דאטה מהלינק
-    const response = await axios.get(url, { 
-        headers: { 'User-Agent': 'Mozilla/5.0' } 
-    });
-    const $ = cheerio.load(response.data);
+    // שכבה 1: Metadata Scraper (ניסיון שליפת מידע גלוי מהדף)
+    let title = "";
+    let description = "";
+    let image = "";
+    
+    try {
+      const response = await axios.get(url, { 
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+          timeout: 5000 
+      });
+      const $ = cheerio.load(response.data);
 
-    const title = $('meta[property="og:title"]').attr("content") || $("title").text();
-    const description = $('meta[property="og:description"]').attr("content") || "";
-    const image = $('meta[property="og:image"]').attr("content") || "";
+      title = $('meta[property="og:title"]').attr("content") || $("title").text();
+      description = $('meta[property="og:description"]').attr("content") || $('meta[name="description"]').attr("content") || "";
+      image = $('meta[property="og:image"]').attr("content") || "";
+    } catch (e) {
+      console.log("Metadata fallback triggered");
+    }
 
-    // פנייה ל-OpenAI לזיהוי קטגוריה דינמית וניתוח התוכן
+    // שכבה 2: AI Classification & Understanding
+    // כאן ה-Prompt הופך ל"מערכתי" ומטפל בסיטואציות של חוסר מידע או תוכן מדיה
     const aiResponse = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: "gpt-4o-mini", // שימוש במודל חזק יותר שתומך בניתוח מורכב
       messages: [
         { 
           role: "system", 
-          content: "Analyze the content and return a JSON object. For 'category', identify the most specific and relevant topic (e.g., Gardening, Productivity, AI, Recipes, Marketing). Do not use a pre-defined list—create a new category if it fits. Also provide a 'summary' (2 sentences) and 'hashtags' (array of 3)." 
+          content: `You are a high-level Content Extraction Agent for SaveSort. 
+          Your job is to analyze the provided link data and return a structured JSON object.
+          
+          RULES:
+          1. Detect the content type (Article, Video, PDF, Social Media post).
+          2. If metadata is thin or missing, infer the topic from the URL and available text.
+          3. CATEGORY: Identify the most specific niche category (e.g., AI Automation, Vegan Recipes, NBA News). Create a NEW category if needed.
+          4. SUMMARY: Provide a 2-sentence summary. If it's a video link, summarize based on the context of the title/description.
+          5. If audio transcript or OCR text were provided (future-proof), prioritize them.
+          
+          Return ONLY JSON:
+          {
+            "type": "content_type",
+            "category": "specific_category",
+            "summary": "2_sentence_summary",
+            "hashtags": ["tag1", "tag2", "tag3"]
+          }`
         },
         { 
           role: "user", 
-          content: `Title: ${title}. Description: ${description}` 
+          content: `Analyze this link: ${url}. 
+          Metadata Title: ${title}. 
+          Metadata Description: ${description}.` 
         }
       ],
       response_format: { type: "json_object" }
     });
 
-    // פיענוח התשובה מה-AI
     const aiData = JSON.parse(aiResponse.choices[0].message.content);
 
-    // החזרת התשובה המלאה ל-Base44
+    // החזרת התוצאה המלאה ל-Base44
     res.json({
-      title,
-      image,
+      success: true,
       url,
-      summary: aiData.summary,
+      title: title || "New Saved Content",
+      image: image || "https://via.placeholder.com/300?text=SaveSort", // תמונת ברירת מחדל אם חסר
+      type: aiData.type,
       category: aiData.category,
+      summary: aiData.summary,
       hashtags: aiData.hashtags
     });
 
   } catch (error) {
-    console.error("Analysis error:", error.message);
-    res.status(500).json({ error: "Failed to analyze link: " + error.message });
+    console.error("Critical Error:", error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: "SaveSort was unable to process this link." 
+    });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
+app.listen(PORT, () => console.log(`SaveSort Engine Running on port ${PORT}`));
