@@ -17,43 +17,38 @@ app.post("/analyze-link", async (req, res) => {
   let metadata = { title: url, description: "", image: "" };
 
   try {
-    // שלב 1: ניסיון סריקה (Scraping) עם הגנה מפני קריסה
     try {
       const response = await axios.get(url, { 
         headers: { 
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7'
         },
-        timeout: 5000 
+        timeout: 8000 
       });
 
       const $ = cheerio.load(response.data);
       metadata.title = $('meta[property="og:title"]').attr("content") || $("title").text() || url;
-      metadata.description = $('meta[property="og:description"]').attr("content") || "";
+      metadata.description = $('meta[property="og:description"]').attr("content") || $('meta[name="description"]').attr("content") || "";
       metadata.image = $('meta[property="og:image"]').attr("content") || "";
     } catch (scrapingError) {
-      // אם הסריקה נכשלה (למשל אינסטגרם חסמה), אנחנו לא קורסים! פשוט ממשיכים עם ה-URL
-      console.log("Scraping blocked or failed, proceeding with URL only.");
+      console.log("Scraping failed, AI will analyze URL structure.");
     }
 
     const isVideo = url.includes("youtube.com") || url.includes("tiktok.com") || url.includes("instagram.com/reel");
 
-    // שלב 2: ניתוח ה-AI (תמיד ירוץ, גם אם הסריקה נכשלה)
     const aiResponse = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
         { 
           role: "system", 
           content: `You are the SaveSort AI Engine. 
-          Analyze the provided link and metadata. 
-          If metadata is missing, rely on the URL structure.
-          Return JSON: { "summary": "...", "category": "...", "hashtags": [...], "type": "..." }` 
+          Extract meaning from the URL and metadata. 
+          CRITICAL: Return 'tags' as an array of strings.
+          Return JSON: { "summary": "...", "category": "...", "tags": [...], "type": "..." }` 
         },
         { 
           role: "user", 
-          content: [
-            { type: "text", text: `Analyze this ${isVideo ? 'video' : 'page'}: ${url}. Metadata Title: ${metadata.title}. Description: ${metadata.description}` },
-            { type: "image_url", image_url: { "url": metadata.image || "https://placehold.co/600x400?text=No+Preview" } }
-          ]
+          content: `Analyze: ${url}. Title: ${metadata.title}. Desc: ${metadata.description}`
         }
       ],
       response_format: { type: "json_object" }
@@ -61,20 +56,20 @@ app.post("/analyze-link", async (req, res) => {
 
     const aiData = JSON.parse(aiResponse.choices[0].message.content);
 
-    // החזרת התשובה ל-Base44
+    // מחזירים tags במקום hashtags כדי להתאים ל-Base44
     res.json({
       title: metadata.title,
       image: metadata.image,
       url,
       summary: aiData.summary,
       category: aiData.category,
-      hashtags: aiData.hashtags,
-      type: aiData.type
+      tags: aiData.tags || [], 
+      type: aiData.type || (isVideo ? "video" : "article")
     });
 
   } catch (error) {
     console.error("Critical Error:", error.message);
-    res.status(500).json({ error: "Internal Server Error", details: error.message });
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
