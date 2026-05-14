@@ -1,21 +1,21 @@
-# שימוש בגרסת Node עדכנית
+# שימוש בגרסת Node 20
 FROM node:20-alpine
 
-# התקנת כלי מערכת: ffmpeg ו-Python עבור חילוץ המידע
+# התקנת ffmpeg, Python ו-yt-dlp עבור חילוץ מידע מתקדם
 RUN apk add --no-cache ffmpeg python3 py3-pip && \
     python3 -m venv /venv && \
     /venv/bin/pip install yt-dlp
 
 WORKDIR /app
 
-# העתקת קבצי ההגדרות והתקנת ספריות ה-Node
+# העתקת הגדרות החבילות והתקנתן
 COPY package*.json ./
 RUN npm install
 
-# העתקת שאר קודי הפרויקט
+# העתקת שאר הקבצים
 COPY . .
 
 EXPOSE 3000
 
-# הרצת השרת
+# הרצת השרת על בסיס server.js
 CMD ["node", "server.js"]
