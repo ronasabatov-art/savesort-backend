@@ -7,7 +7,9 @@ RUN apk add --no-cache ffmpeg
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN apk add --no-cache ffmpeg python3 py3-pip && \
+    python3 -m venv /venv && \
+    /venv/bin/pip install yt-dlp
 
 COPY . .
 
