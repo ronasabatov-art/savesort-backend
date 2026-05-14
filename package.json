@@ -13,3 +13,7 @@
     "openai": "^4.28.0"
   }
 }
+"dependencies": {
+  ...
+  "execa": "^5.1.1"
+}
