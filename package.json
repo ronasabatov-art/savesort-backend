@@ -1,106 +1,15 @@
-const express = require("express");
-const cors = require("cors");
-const axios = require("axios");
-const cheerio = require("cheerio");
-const OpenAI = require("openai");
-const { exec } = require("child_process");
-const util = require("util");
-const execPromise = util.promisify(exec);
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-// פונקציית עזר לחילוץ מידע בעזרת yt-dlp (עוקף חסימות אינסטגרם/יוטיוב)
-async function getMetadataWithYtDlp(url) {
-  try {
-    // הרצת הפקודה שמחזירה JSON עם כל פרטי הסרטון
-    const { stdout } = await execPromise(`/venv/bin/yt-dlp --dump-json --no-playlist "${url}"`);
-    const data = JSON.parse(stdout);
-    return {
-      title: data.title || data.alt_title || "",
-      description: data.description || "",
-      image: data.thumbnail || ""
-    };
-  } catch (error) {
-    console.log("yt-dlp failed or not a video link, falling back to axios.");
-    return null;
+{
+  "name": "savesort-backend",
+  "version": "1.0.1",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0",
+    "openai": "^4.28.0"
   }
 }
-
-app.post("/analyze-link", async (req, res) => {
-  const { url } = req.body;
-  let metadata = { title: url, description: "", image: "" };
-
-  try {
-    const isVideo = url.includes("youtube.com") || url.includes("youtu.be") || url.includes("tiktok.com") || url.includes("instagram.com");
-
-    // שלב 1: חילוץ מידע (Metadata)
-    let extracted = null;
-    
-    if (isVideo) {
-      extracted = await getMetadataWithYtDlp(url);
-    }
-
-    if (extracted) {
-      metadata = extracted;
-    } else {
-      // גיבוי בעזרת axios לאתרים רגילים או אם yt-dlp נכשל
-      try {
-        const response = await axios.get(url, { 
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-          timeout: 5000 
-        });
-        const $ = cheerio.load(response.data);
-        metadata.title = $('meta[property="og:title"]').attr("content") || $("title").text() || url;
-        metadata.description = $('meta[property="og:description"]').attr("content") || $('meta[name="description"]').attr("content") || "";
-        metadata.image = $('meta[property="og:image"]').attr("content") || "";
-      } catch (e) {
-        console.log("Axios scraping failed too.");
-      }
-    }
-
-    // שלב 2: ניתוח בעזרת OpenAI (GPT-4o)
-    const aiResponse = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        { 
-          role: "system", 
-          content: `You are the SaveSort AI Engine. 
-          Extract meaning from the URL and metadata. 
-          CRITICAL: Return 'tags' as an array of strings. 
-          Return JSON: { "summary": "...", "category": "...", "tags": [...], "type": "..." }` 
-        },
-        { 
-          role: "user", 
-          content: `Analyze this link: ${url}. Title: ${metadata.title}. Description: ${metadata.description}`
-        }
-      ],
-      response_format: { type: "json_object" }
-    });
-
-    const aiData = JSON.parse(aiResponse.choices[0].message.content);
-
-    // שליחת התשובה הסופית ל-Base44
-    res.json({
-      title: metadata.title,
-      image: metadata.image,
-      url,
-      summary: aiData.summary,
-      category: aiData.category,
-      tags: aiData.tags || [],
-      type: aiData.type || (isVideo ? "video" : "article")
-    });
-
-  } catch (error) {
-    console.error("Critical Error:", error.message);
-    res.status(500).json({ error: "Internal Server Error", details: error.message });
-  }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`SaveSort AI is live on port ${PORT}`));
